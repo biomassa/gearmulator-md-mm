@@ -23,6 +23,8 @@ set(SOURCES
 	mdLcdViewport.h
 	mdPixelPerfectPanel.cpp mdPixelPerfectPanel.h
 	mdPanelAffordances.h
+	mdPanelMidiInput.cpp mdPanelMidiInput.h
+	mdPanelMidiMap.cpp mdPanelMidiMap.h
 	mdPluginEditorState.cpp mdPluginEditorState.h
 	mdProductSkinPolicy.h
 	mdProductSkins.h
@@ -173,6 +175,12 @@ if(BUILD_TESTING)
 			LABELS "LcdInteraction;LocalCorpus")
 		set_property(TARGET mdLcdInteractionCorpusTest PROPERTY FOLDER "Elektron/test")
 	endif()
+
+	add_executable(mdPanelMidiMapTest mdPanelMidiMapTest.cpp mdPanelMidiMap.cpp)
+	target_link_libraries(mdPanelMidiMapTest PRIVATE mdLib)
+	add_test(NAME mdPanelMidiMapTest COMMAND mdPanelMidiMapTest)
+	set_tests_properties(mdPanelMidiMapTest PROPERTIES LABELS "UnitTest;Panel;MIDI")
+	set_property(TARGET mdPanelMidiMapTest PROPERTY FOLDER "Elektron/test")
 
 	add_executable(mdLcdEditorPointerTest mdLcdEditorPointerTest.cpp)
 	target_include_directories(mdLcdEditorPointerTest PRIVATE

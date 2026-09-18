@@ -147,6 +147,8 @@ namespace mdJucePlugin
 
 	Editor::~Editor()
 	{
+		// Stop panel MIDI first: its handler calls back into this editor.
+		m_panelMidiInput.reset();
 		juce::Desktop::getInstance().removeFocusChangeListener(this);
 		m_panelSteps.clear();
 		cancelPanelInputGestures();
@@ -286,6 +288,7 @@ namespace mdJucePlugin
 		createLeds();
 		createPanelAffordances();
 		applyPixelPerfectPanel();
+		createPanelMidi();
 
 		// A transfer belongs to the emulated machine, not the lifetime of one
 		// editor window. Reattach progress monitoring after a reopen, or reclaim a
@@ -511,6 +514,7 @@ namespace mdJucePlugin
 	void Editor::createButtons()
 	{
 		cancelPanelInputGestures();
+		m_panelButtonBindings.clear();
 		const auto model = getModel();
 
 		for (const auto& pb : g_panelButtons)
@@ -526,37 +530,18 @@ namespace mdJucePlugin
 				continue;
 			}
 
+			const PanelButtonBinding binding{ pb.control, b, *packet };
+			m_panelButtonBindings.push_back(binding);
+
 			// On the hardware, A/E through D/H are held while a trig key chooses the
 			// pattern number. A normal MM bank click therefore keeps its existing latch.
 			// When another Shift-held control is active, the bank acts as an ordinary
 			// momentary target so chords such as FUNCTION + BANK remain exact.
 			if(model == md::MachineModel::Monomachine
 				&& panelAffordances::isPatternBank(pb.control))
-			{
 				b->SetAttribute("title",
 					"Click to hold this bank until a trig; Shift uses the same bank latch");
-				juceRmlUi::EventListener::Add(b, Rml::EventId::Mousedown,
-					[this, b, packet, control = pb.control](Rml::Event& _event)
-				{
-					const bool shiftDown = _event.GetParameter<int>("shift_key", 0) != 0;
-					if(!shiftDown && !m_shiftPanelLatch.empty())
-						releasePanelButtonGestures();
-					if(panelAffordances::usesPersistentPatternBankLatch(getModel(),
-						control, !m_shiftPanelLatch.empty()))
-						togglePatternBankLatch(b, *packet);
-					else
-						pressPanelButton(b, control, *packet, shiftDown);
-				});
-				const auto release = [this, b, packet, control = pb.control](Rml::Event&)
-				{
-					releasePanelButton(b, control, *packet);
-				};
-				juceRmlUi::EventListener::Add(b, Rml::EventId::Mouseup, release);
-				juceRmlUi::EventListener::Add(b, Rml::EventId::Mouseout, release);
-				continue;
-			}
-
-			if(isTrigger(pb.control))
+			else if(isTrigger(pb.control))
 				b->SetAttribute("title",
 					"Shift-click to hold this trig; release Shift to let go");
 			else
@@ -564,16 +549,15 @@ namespace mdJucePlugin
 					"Shift-click to hold; use another control; release Shift to let go");
 
 			juceRmlUi::EventListener::Add(b, Rml::EventId::Mousedown,
-				[this, b, packet, control = pb.control](Rml::Event& _event)
+				[this, binding](Rml::Event& _event)
 			{
-				pressPanelButton(b, control, *packet,
-					_event.GetParameter<int>("shift_key", 0) != 0);
+				panelButtonDown(binding, _event.GetParameter<int>("shift_key", 0) != 0);
 			});
 
 			// Mouseout releases too, otherwise dragging off a button leaves it held.
-			const auto release = [this, b, packet, control = pb.control](Rml::Event&)
+			const auto release = [this, binding](Rml::Event&)
 			{
-				releasePanelButton(b, control, *packet);
+				panelButtonUp(binding);
 			};
 			juceRmlUi::EventListener::Add(b, Rml::EventId::Mouseup, release);
 			juceRmlUi::EventListener::Add(b, Rml::EventId::Mouseout, release);
@@ -617,6 +601,28 @@ namespace mdJucePlugin
 					cancelLcdGesture();
 				});
 		}
+	}
+
+	void Editor::panelButtonDown(const PanelButtonBinding& _binding, const bool _shiftDown)
+	{
+		if(getModel() == md::MachineModel::Monomachine
+			&& panelAffordances::isPatternBank(_binding.control))
+		{
+			if(!_shiftDown && !m_shiftPanelLatch.empty())
+				releasePanelButtonGestures();
+			if(panelAffordances::usesPersistentPatternBankLatch(getModel(),
+				_binding.control, !m_shiftPanelLatch.empty()))
+			{
+				togglePatternBankLatch(_binding.button, _binding.packet);
+				return;
+			}
+		}
+		pressPanelButton(_binding.button, _binding.control, _binding.packet, _shiftDown);
+	}
+
+	void Editor::panelButtonUp(const PanelButtonBinding& _binding)
+	{
+		releasePanelButton(_binding.button, _binding.control, _binding.packet);
 	}
 
 	void Editor::pressPanelButton(juceRmlUi::ElemButton* const _button,
@@ -1832,6 +1838,78 @@ namespace mdJucePlugin
 		_accum -= static_cast<float>(steps);
 
 		emitEncoderSteps(_encoder, steps);
+	}
+
+	void Editor::createPanelMidi()
+	{
+		m_panelMidiInput.reset();
+		if(!getProcessor().getConfig().getBoolValue(panelMidi::g_configKeyVirtualPort, true))
+			return;
+
+		const std::string name = getModel() == md::MachineModel::Monomachine
+			? "Gearmulator MM Panel" : "Gearmulator MD Panel";
+		m_panelMidiInput = std::make_unique<panelMidi::Input>(name,
+			[this](const panelMidi::Action& _action)
+			{
+				applyPanelMidiAction(_action);
+			});
+	}
+
+	void Editor::applyPanelMidiAction(const panelMidi::Action& _action)
+	{
+		switch(_action.kind)
+		{
+		case panelMidi::Action::Kind::EncoderSteps:
+			applyPanelMidiEncoder(_action.encoder, _action.steps);
+			break;
+		case panelMidi::Action::Kind::ButtonDown:
+		case panelMidi::Action::Kind::ButtonUp:
+			{
+				const auto it = std::find_if(m_panelButtonBindings.begin(), m_panelButtonBindings.end(),
+					[&](const PanelButtonBinding& _binding) { return _binding.control == _action.control; });
+				if(it == m_panelButtonBindings.end())
+					return;	// not present on this model or skin
+				if(_action.kind == panelMidi::Action::Kind::ButtonDown)
+					panelButtonDown(*it, false);
+				else
+					panelButtonUp(*it);
+			}
+			break;
+		}
+	}
+
+	void Editor::applyPanelMidiEncoder(const md::PanelEncoder _encoder, const int _steps)
+	{
+		juceRmlUi::ElemKnob* knob = nullptr;
+		if(_encoder == md::PanelEncoder::Level)
+			knob = m_levelEncoder;
+		else if(_encoder == md::PanelEncoder::SoundSelection)
+			knob = m_soundEncoder;
+		else if(static_cast<size_t>(_encoder) < m_encoders.size())
+			knob = m_encoders[static_cast<size_t>(_encoder)];
+
+		if(!knob)
+		{
+			emitEncoderSteps(_encoder, _steps);
+			return;
+		}
+
+		// Turn the knob itself, exactly like a mouse drag: its Change event runs
+		// onEncoderChanged, which sends the panel steps. That keeps the on-screen
+		// rotation and the firmware in step. Moves are split so that no single
+		// change reaches half the knob range, which onEncoderChanged could not
+		// tell apart from a wrap in the other direction.
+		constexpr int maxSteps = 127;
+		int remaining = std::clamp(_steps, -maxSteps, maxSteps);
+		while(remaining != 0)
+		{
+			const int chunk = std::clamp(remaining, -g_encoderBurstCap, g_encoderBurstCap);
+			remaining -= chunk;
+			auto value = std::fmod(knob->getValue() + static_cast<float>(chunk), g_encoderRange);
+			if(value < 0.0f)
+				value += g_encoderRange;
+			knob->setValue(value);
+		}
 	}
 
 	void Editor::emitEncoderSteps(const md::PanelEncoder _encoder, const int _steps) const

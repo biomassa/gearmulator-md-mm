@@ -12,6 +12,7 @@
 #include "mdFrontPanelPresentation.h"
 #include "mdLcdGesture.h"
 #include "mdLcdInteractionModel.h"
+#include "mdPanelMidiInput.h"
 #include "mdPanelAffordances.h"
 #include "mdLib/mdfrontpanel.h"
 #include "mdLib/mdsyseximport.h"
@@ -112,6 +113,18 @@ namespace mdJucePlugin
 			const md::PanelPacket& _packet, bool _shiftDown);
 		void releasePanelButton(juceRmlUi::ElemButton* _button, md::PanelControl _control,
 			const md::PanelPacket& _packet);
+		struct PanelButtonBinding
+		{
+			md::PanelControl control = md::PanelControl::Trigger1;
+			juceRmlUi::ElemButton* button = nullptr;
+			md::PanelPacket packet;
+		};
+		// Shared by mouse and panel MIDI so both take the same latch/chord paths.
+		void panelButtonDown(const PanelButtonBinding& _binding, bool _shiftDown);
+		void panelButtonUp(const PanelButtonBinding& _binding);
+		void createPanelMidi();
+		void applyPanelMidiAction(const panelMidi::Action& _action);
+		void applyPanelMidiEncoder(md::PanelEncoder _encoder, int _steps);
 		void releaseActivePanelButtons();
 		void beginPanelGesture(Rml::Element* _element,
 			std::initializer_list<md::PanelControl> _controls);
@@ -201,6 +214,8 @@ namespace mdJucePlugin
 			md::PanelPacket packet;
 		};
 		std::vector<ActivePanelButton> m_activePanelButtons;
+		std::vector<PanelButtonBinding> m_panelButtonBindings;
+		std::unique_ptr<panelMidi::Input> m_panelMidiInput;
 
 		struct PanelStep
 		{
