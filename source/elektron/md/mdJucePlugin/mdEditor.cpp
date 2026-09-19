@@ -5,6 +5,7 @@
 #include "mdPluginProcessor.h"
 #include "mdSettingsAudioInput.h"
 #include "mdSettingsPanelFeel.h"
+#include "mdSettingsPanelMidi.h"
 #include "mdPixelPerfectPanel.h"
 #include "mdLcdViewport.h"
 
@@ -147,8 +148,9 @@ namespace mdJucePlugin
 
 	Editor::~Editor()
 	{
-		// Stop panel MIDI first: its handler calls back into this editor.
+		// Stop panel MIDI first: its handlers call back into this editor.
 		m_panelMidiInput.reset();
+		m_panelMidi.reset();
 		juce::Desktop::getInstance().removeFocusChangeListener(this);
 		m_panelSteps.clear();
 		cancelPanelInputGestures();
@@ -412,7 +414,7 @@ namespace mdJucePlugin
 			lcdInteraction::configKey, lcdInteraction::defaultEnabled);
 		const auto oldState = m_lcdInteractionState;
 		m_lcdInteractionState = enabled && m_frontPanelSnapshotValid
-			? lcdInteraction::classify(m_frontPanelSnapshot, getModel(), m_encoderPress.active())
+			? lcdInteraction::classify(m_frontPanelSnapshot, getModel(), m_encoderPress.active() || m_midiEncoderPushMask != 0)
 			: std::nullopt;
 		m_lcdInteractionInputChanged = false;
 		const auto identityChanged = oldState.has_value() != m_lcdInteractionState.has_value()
@@ -894,6 +896,15 @@ namespace mdJucePlugin
 			if(m_panelRows.mask(row) != 0)
 				(void)sendPanelEvent(row, 0);
 		m_panelRows.reset();
+
+		if(m_midiEncoderPushMask != 0)
+		{
+			for(size_t i = 0; i < m_encoders.size(); ++i)
+				if(m_encoders[i] && (m_midiEncoderPushMask & (1u << i)) != 0)
+					m_encoders[i]->SetClass("encoderPressed", false);
+			m_midiEncoderPushMask = 0;
+			m_lcdInteractionInputChanged = true;
+		}
 	}
 
 	void Editor::queuePanelPulse(const md::PanelControl _control, const int _count)
@@ -1105,6 +1116,23 @@ namespace mdJucePlugin
 		m_soundEncoder = findChild<juceRmlUi::ElemKnob>("encSound", false);
 		configureEncoder(m_soundEncoder, md::PanelEncoder::SoundSelection,
 			m_soundLast, m_soundAccum);
+	}
+
+	void Editor::registerSettings(std::vector<std::unique_ptr<jucePluginEditorLib::SettingsPlugin>>& _plugins)
+	{
+		jucePluginEditorLib::Editor::registerSettings(_plugins);
+
+		// Right after MIDI Learn, the page it is closest to.
+		auto position = _plugins.end();
+		for(auto it = _plugins.begin(); it != _plugins.end(); ++it)
+		{
+			if((*it)->getCategoryName() == "MIDI Learn")
+			{
+				position = it + 1;
+				break;
+			}
+		}
+		_plugins.insert(position, std::make_unique<SettingsPanelMidi>(*this));
 	}
 
 	std::string Editor::getSettingsTemplateSuffix() const
@@ -1843,16 +1871,37 @@ namespace mdJucePlugin
 	void Editor::createPanelMidi()
 	{
 		m_panelMidiInput.reset();
-		if(!getProcessor().getConfig().getBoolValue(panelMidi::g_configKeyVirtualPort, true))
+
+		const auto file = juce::File(getProcessor().getDataFolder()).getChildFile(
+			getModel() == md::MachineModel::Monomachine ? "panelMidi_Monomachine.txt" : "panelMidi_Machinedrum.txt");
+		m_panelMidi = std::make_unique<panelMidi::Controller>(getModel(), file.getFullPathName().toStdString(),
+			[this](const panelMidi::Action& _action)
+			{
+				applyPanelMidiAction(_action);
+			});
+
+		setPanelMidiPortEnabled(getProcessor().getConfig().getBoolValue(panelMidi::g_configKeyVirtualPort, true));
+	}
+
+	void Editor::setPanelMidiPortEnabled(const bool _enabled)
+	{
+		m_panelMidiInput.reset();
+		if(!_enabled || !m_panelMidi)
 			return;
 
 		const std::string name = getModel() == md::MachineModel::Monomachine
 			? "Gearmulator MM Panel" : "Gearmulator MD Panel";
 		m_panelMidiInput = std::make_unique<panelMidi::Input>(name,
-			[this](const panelMidi::Action& _action)
+			[this](const panelMidi::RawMessage& _message)
 			{
-				applyPanelMidiAction(_action);
+				if(m_panelMidi)
+					m_panelMidi->handleMessage(_message);
 			});
+	}
+
+	std::string Editor::getPanelMidiPortName() const
+	{
+		return m_panelMidiInput ? m_panelMidiInput->getPortName() : std::string();
 	}
 
 	void Editor::applyPanelMidiAction(const panelMidi::Action& _action)
@@ -1861,6 +1910,10 @@ namespace mdJucePlugin
 		{
 		case panelMidi::Action::Kind::EncoderSteps:
 			applyPanelMidiEncoder(_action.encoder, _action.steps);
+			break;
+		case panelMidi::Action::Kind::EncoderPushDown:
+		case panelMidi::Action::Kind::EncoderPushUp:
+			setEncoderPushFromMidi(_action.encoder, _action.kind == panelMidi::Action::Kind::EncoderPushDown);
 			break;
 		case panelMidi::Action::Kind::ButtonDown:
 		case panelMidi::Action::Kind::ButtonUp:
@@ -1876,6 +1929,33 @@ namespace mdJucePlugin
 			}
 			break;
 		}
+	}
+
+	// Presses or lets go of an encoder's push switch. The mouse gesture for this
+	// (Alt-click) is a single gesture that a timer ends as soon as Alt is up, so
+	// MIDI keeps its own held state and shares only the panel row state with it.
+	void Editor::setEncoderPushFromMidi(const md::PanelEncoder _encoder, const bool _down)
+	{
+		const auto index = static_cast<size_t>(_encoder);
+		const auto packet = md::panelEncoderPressPacket(getModel(), _encoder);
+		if(!packet || index >= m_encoders.size())
+			return;
+
+		const auto bit = static_cast<uint8_t>(1u << index);
+		if(((m_midiEncoderPushMask & bit) != 0) == _down)
+			return;
+		m_midiEncoderPushMask = _down ? static_cast<uint8_t>(m_midiEncoderPushMask | bit)
+			: static_cast<uint8_t>(m_midiEncoderPushMask & ~bit);
+
+		if(m_encoders[index])
+			m_encoders[index]->SetClass("encoderPressed", _down);
+
+		const auto combined = _down ? m_panelRows.press(*packet) : m_panelRows.release(*packet);
+		(void)sendPanelEvent(combined.row, combined.mask);
+
+		// A held switch is an input of the LCD classifier, as with the mouse press.
+		m_lcdInteractionInputChanged = true;
+		updateLcdInteractionState();
 	}
 
 	void Editor::applyPanelMidiEncoder(const md::PanelEncoder _encoder, const int _steps)

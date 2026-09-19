@@ -57,27 +57,25 @@ namespace mdJucePlugin::panelMidi
 			return;	// sysex and anything longer is not a panel message
 
 		const auto* const data = _message.getRawData();
-		const auto action = m_map.translate(data[0], count > 1 ? data[1] : 0, count > 2 ? data[2] : 0);
-		if(!action)
-			return;
+		const RawMessage message{ data[0], count > 1 ? data[1] : uint8_t(0), count > 2 ? data[2] : uint8_t(0) };
 
 		{
 			const std::lock_guard lock(m_mutex);
 			if(m_pending.size() >= g_maxPending)
 				return;
-			m_pending.push_back(*action);
+			m_pending.push_back(message);
 		}
 		triggerAsyncUpdate();
 	}
 
 	void Input::handleAsyncUpdate()
 	{
-		std::vector<Action> actions;
+		std::vector<RawMessage> messages;
 		{
 			const std::lock_guard lock(m_mutex);
-			actions.swap(m_pending);
+			messages.swap(m_pending);
 		}
-		for(const auto& action : actions)
-			m_handler(action);
+		for(const auto& message : messages)
+			m_handler(message);
 	}
 }

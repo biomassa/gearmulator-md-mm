@@ -17,10 +17,10 @@ namespace mdJucePlugin::panelMidi
 	// false to stop an instance from publishing a port.
 	constexpr auto g_configKeyVirtualPort = "panelMidiVirtualPort";
 
-	// A virtual MIDI input that drives the emulator's front panel. It is not
-	// connected to the emulated device: messages are translated by Map and
-	// delivered to the handler on the message thread, which is the only thread
-	// that may touch the editor.
+	// A virtual MIDI input for controlling the emulator's front panel. It is not
+	// connected to the emulated device. The MIDI thread only queues the raw
+	// channel messages; they are handed to the handler on the message thread,
+	// which is the only thread that may touch the editor.
 	//
 	// Several instances can live in one process (plugins in a DAW). The first
 	// keeps the plain port name and later ones get " 2", " 3", ... so they can be
@@ -28,7 +28,7 @@ namespace mdJucePlugin::panelMidi
 	class Input final : private juce::MidiInputCallback, private juce::AsyncUpdater
 	{
 	public:
-		using Handler = std::function<void(const Action&)>;
+		using Handler = std::function<void(const RawMessage&)>;
 
 		Input(const std::string& _portName, Handler _handler);
 		~Input() override;
@@ -51,9 +51,8 @@ namespace mdJucePlugin::panelMidi
 		int m_instanceNumber = 0;
 		std::string m_portName;
 		Handler m_handler;
-		Map m_map;	// MIDI thread only
 		std::mutex m_mutex;
-		std::vector<Action> m_pending;
+		std::vector<RawMessage> m_pending;
 		std::unique_ptr<juce::MidiInput> m_input;
 	};
 }
