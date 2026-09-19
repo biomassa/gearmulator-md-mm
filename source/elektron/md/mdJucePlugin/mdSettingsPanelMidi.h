@@ -51,14 +51,25 @@ namespace mdJucePlugin
 
 		void timerCallback() override;
 
+		// "Learn all in order" for one section: learns its rows one after another.
+		struct Section
+		{
+			Rml::Element* button = nullptr;
+			std::vector<panelMidi::Controller::LearnTarget> targets;
+		};
+
 		void createRows(Rml::Element* _root, const char* _rowId,
 			const std::vector<panelMidi::Controller::LearnTarget>& _targets);
+		void createSection(Rml::Element* _root, const char* _buttonId,
+			const std::vector<panelMidi::Controller::LearnTarget>& _targets);
+		bool isRunning(const Section& _section, const panelMidi::Controller& _controller) const;
 		void refresh();
 		panelMidi::Controller* controller() const;
 
 		Editor& m_editor;
 		std::weak_ptr<void> m_lifetime;
 		std::vector<Row> m_rows;
+		std::vector<Section> m_sections;
 		juceRmlUi::ElemComboBox* m_channel = nullptr;
 		Rml::Element* m_portName = nullptr;
 		Rml::Element* m_monitor = nullptr;

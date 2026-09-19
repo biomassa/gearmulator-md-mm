@@ -189,6 +189,11 @@ namespace mdJucePlugin
 		createRows(_root, "trigRow", trigs);
 		createRows(_root, "buttonRow", buttons);
 
+		createSection(_root, "btLearnAllEncoders", encoders);
+		createSection(_root, "btLearnAllPushes", pushes);
+		createSection(_root, "btLearnAllTrigs", trigs);
+		createSection(_root, "btLearnAllButtons", buttons);
+
 		m_portName = juceRmlUi::helper::findChild(_root, "panelMidiPortName", false);
 		m_monitor = juceRmlUi::helper::findChild(_root, "panelMidiMonitor", false);
 
@@ -239,6 +244,40 @@ namespace mdJucePlugin
 	panelMidi::Controller* SettingsPanelMidi::controller() const
 	{
 		return m_lifetime.expired() ? nullptr : &m_editor.getPanelMidi();
+	}
+
+	bool SettingsPanelMidi::isRunning(const Section& _section, const panelMidi::Controller& _controller) const
+	{
+		if(!_controller.isLearningSequence())
+			return false;
+		for(const auto& target : _section.targets)
+			if(sameTarget(target, _controller.getLearnTarget()))
+				return true;
+		return false;
+	}
+
+	void SettingsPanelMidi::createSection(Rml::Element* const _root, const char* const _buttonId,
+		const std::vector<panelMidi::Controller::LearnTarget>& _targets)
+	{
+		auto* const button = juceRmlUi::helper::findChild(_root, _buttonId, false);
+		if(!button || _targets.empty())
+			return;
+
+		const auto index = m_sections.size();
+		m_sections.push_back({ button, _targets });
+
+		juceRmlUi::EventListener::Add(button, Rml::EventId::Click, [this, index](Rml::Event& _event)
+		{
+			_event.StopPropagation();
+			auto* const c = controller();
+			if(!c)
+				return;
+			const auto& section = m_sections[index];
+			if(isRunning(section, *c))
+				c->cancelLearn();
+			else
+				c->beginLearnSequence(section.targets);
+		});
 	}
 
 	void SettingsPanelMidi::createRows(Rml::Element* _root, const char* const _rowId,
@@ -337,6 +376,15 @@ namespace mdJucePlugin
 
 		if(m_channel)
 			m_channel->setSelectedIndex(table.channel, false);
+
+		for(const auto& section : m_sections)
+		{
+			if(!section.button)
+				continue;
+			section.button->SetInnerRML(isRunning(section, *c)
+				? "Stop (" + std::to_string(c->getSequenceIndex() + 1) + " of " + std::to_string(c->getSequenceSize()) + ")"
+				: std::string("Learn all in order"));
+		}
 	}
 
 	void SettingsPanelMidi::timerCallback()
@@ -351,7 +399,10 @@ namespace mdJucePlugin
 		if(m_monitor && c->getMessageSerial() != m_messageSerial)
 		{
 			m_messageSerial = c->getMessageSerial();
-			m_monitor->SetInnerRML("Last received: " + panelMidi::describe(c->getLastMessage()));
+			auto text = "Last received: " + panelMidi::describe(c->getLastMessage());
+			if(c->wasLastMessageFiltered())
+				text += " - ignored, the channel filter is " + std::to_string(c->getTable().channel);
+			m_monitor->SetInnerRML(text);
 		}
 
 		if(m_portName)

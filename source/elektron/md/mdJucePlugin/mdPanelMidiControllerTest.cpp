@@ -191,6 +191,190 @@ namespace
 		require(f.actions[4].kind == Action::Kind::ButtonUp, "step released last");
 	}
 
+	using Target = Controller::LearnTarget;
+
+	Target trigTarget(const int _index)
+	{
+		Target t;
+		t.kind = Target::Kind::Button;
+		t.control = static_cast<md::PanelControl>(static_cast<int>(md::PanelControl::Trigger1) + _index);
+		return t;
+	}
+
+	Target encoderTarget(const md::PanelEncoder _encoder)
+	{
+		Target t;
+		t.kind = Target::Kind::Encoder;
+		t.encoder = _encoder;
+		return t;
+	}
+
+	std::vector<Target> allTrigs()
+	{
+		std::vector<Target> targets;
+		for(int i = 0; i < 16; ++i)
+			targets.push_back(trigTarget(i));
+		return targets;
+	}
+
+	void testLearnSequenceWithNotes()
+	{
+		Fixture f(g_md);
+		f.controller.beginLearnSequence(allTrigs());
+		require(f.controller.isLearningSequence() && f.controller.getSequenceSize() == 16, "a run of 16");
+		require(f.controller.getLearnTarget().is(md::PanelControl::Trigger1), "starts with trig 1");
+
+		// 16 pads, each pressed and released like a real pad: note-on, note-off.
+		for(int i = 0; i < 16; ++i)
+		{
+			require(f.controller.getLearnTarget().is(static_cast<md::PanelControl>(static_cast<int>(md::PanelControl::Trigger1) + i)),
+				"the current control moves along the list");
+			require(f.controller.getSequenceIndex() == static_cast<size_t>(i), "progress counts");
+			f.send(0x90, static_cast<uint8_t>(81 + i), 100);
+			f.send(0x80, static_cast<uint8_t>(81 + i), 0);	// releasing must not advance
+		}
+
+		require(!f.controller.isLearningSequence() && !f.controller.getLearnTarget().active(), "the run ends by itself");
+		for(int i = 0; i < 16; ++i)
+			require(buttonSource(f.controller, static_cast<md::PanelControl>(static_cast<int>(md::PanelControl::Trigger1) + i))
+				== Source{ Source::Kind::Note, static_cast<uint8_t>(81 + i) }, "each trig has its own pad");
+		// Nothing was pressed on the panel while learning. Only the last pad's note-off
+		// arrives after the run has ended: a release for a key that is not down, which
+		// the editor ignores.
+		for(const auto& action : f.actions)
+			require(action.kind == Action::Kind::ButtonUp && action.control == md::PanelControl::Trigger16,
+				"learning did not press anything on the panel");
+		f.actions.clear();
+
+		f.send(0x90, 88, 100);
+		require(f.actions.size() == 1 && f.actions[0].control == md::PanelControl::Trigger8, "pad 88 plays trig 8 now");
+	}
+
+	void testLearnSequenceIgnoresRepeatsAndReleases()
+	{
+		Fixture f(g_md);
+		f.controller.beginLearnSequence({ trigTarget(0), trigTarget(1), trigTarget(2) });
+
+		// Pads that send a CC: 127 when pressed, 0 when released.
+		f.send(0xb0, 40, 127);	// trig 1
+		f.send(0xb0, 40, 0);	// its release: must not learn "CC 40" again for trig 2
+		require(f.controller.getSequenceIndex() == 1, "the release did not advance the run");
+		f.send(0xb0, 40, 127);	// pressing the same pad again is not a new pad
+		require(f.controller.getSequenceIndex() == 1, "the same pad twice does not advance");
+		f.send(0xb0, 41, 127);	// trig 2
+		f.send(0xb0, 41, 0);
+		f.send(0xb0, 42, 127);	// trig 3
+		require(!f.controller.isLearningSequence(), "finished");
+		require(buttonSource(f.controller, md::PanelControl::Trigger1) == Source{ Source::Kind::Controller, 40 }, "trig 1 kept CC 40");
+		require(buttonSource(f.controller, md::PanelControl::Trigger2) == Source{ Source::Kind::Controller, 41 }, "trig 2 is CC 41");
+		require(buttonSource(f.controller, md::PanelControl::Trigger3) == Source{ Source::Kind::Controller, 42 }, "trig 3 is CC 42");
+	}
+
+	void testLearnSequenceOfEncoders()
+	{
+		Fixture f(g_md);
+		std::vector<Target> targets;
+		for(size_t i = 0; i < 4; ++i)
+			targets.push_back(encoderTarget(static_cast<md::PanelEncoder>(i)));
+		f.controller.beginLearnSequence(targets);
+
+		// A knob keeps sending while it is turned; only the first message counts.
+		for(int i = 0; i < 6; ++i) f.send(0xb0, 70, static_cast<uint8_t>(10 + i));
+		require(f.controller.getSequenceIndex() == 1, "turning one knob advances the run once");
+		f.send(0x90, 60, 100);	// a note cannot be an encoder
+		require(f.controller.getSequenceIndex() == 1, "notes are ignored while learning encoders");
+		for(int i = 0; i < 6; ++i) f.send(0xb0, 71, static_cast<uint8_t>(50 + i));
+		for(int i = 0; i < 3; ++i) f.send(0xb0, 72, static_cast<uint8_t>(90 + i));
+		for(int i = 0; i < 3; ++i) f.send(0xb0, 73, static_cast<uint8_t>(20 + i));
+		require(!f.controller.isLearningSequence(), "four knobs learned");
+		for(size_t i = 0; i < 4; ++i)
+			require(encoderSource(f.controller, static_cast<md::PanelEncoder>(i))
+				== Source{ Source::Kind::Controller, static_cast<uint8_t>(70 + i) }, "knob order kept");
+	}
+
+	void testLearnSequenceCanBeStopped()
+	{
+		Fixture f(g_md);
+		f.controller.beginLearnSequence(allTrigs());
+		f.send(0x90, 90, 100);
+		f.send(0x90, 91, 100);
+		f.controller.cancelLearn();
+		require(!f.controller.isLearningSequence() && !f.controller.getLearnTarget().active(), "stopped");
+		require(buttonSource(f.controller, md::PanelControl::Trigger2) == Source{ Source::Kind::Note, 91 }, "what was learned is kept");
+		require(buttonSource(f.controller, md::PanelControl::Trigger3) == Source{ Source::Kind::Controller, 67 },
+			"the rest keeps its old binding (CC 67)");
+
+		// A single Learn during a run replaces the run.
+		f.controller.beginLearnSequence(allTrigs());
+		f.controller.beginLearn(md::PanelControl::Play);
+		require(!f.controller.isLearningSequence() && f.controller.getLearnTarget().is(md::PanelControl::Play),
+			"a single learn ends the run");
+		f.controller.cancelLearn();
+
+		// Reset ends a run too.
+		f.controller.beginLearnSequence(allTrigs());
+		f.controller.resetToDefault();
+		require(!f.controller.isLearningSequence(), "reset ends the run");
+	}
+
+	void testLearnSequenceSkipsControlsTheMachineLacks()
+	{
+		Fixture md(g_md);
+		Target track;
+		track.kind = Target::Kind::Button;
+		track.control = md::PanelControl::Track1;
+		md.controller.beginLearnSequence({ track, trigTarget(0) });
+		require(md.controller.getSequenceSize() == 1 && md.controller.getLearnTarget().is(md::PanelControl::Trigger1),
+			"the MD has no track buttons, so only the trig is left");
+
+		Fixture mm(g_mm);
+		mm.controller.beginLearnSequence({ track, trigTarget(0) });
+		require(mm.controller.getSequenceSize() == 2 && mm.controller.getLearnTarget().is(md::PanelControl::Track1),
+			"the MM keeps both");
+
+		Fixture none(g_md);
+		none.controller.beginLearnSequence({ track });
+		require(!none.controller.isLearningSequence(), "a list of nothing available starts nothing");
+	}
+
+	void testFilteredMessagesAreFlagged()
+	{
+		Fixture f(g_md);
+		f.controller.setChannel(5);
+		f.send(0xb0, 20, 66);	// channel 1
+		require(f.controller.wasLastMessageFiltered(), "channel 1 is filtered when the filter is 5");
+		f.send(0xb4, 20, 66);	// channel 5
+		require(!f.controller.wasLastMessageFiltered(), "channel 5 passes");
+		f.send(0xf8, 0, 0);		// a clock tick is not a channel message
+		require(!f.controller.wasLastMessageFiltered(), "system messages are not called filtered");
+		f.controller.setChannel(0);
+		f.send(0xb0, 20, 66);
+		require(!f.controller.wasLastMessageFiltered(), "omni filters nothing");
+	}
+
+	void testPressureIsIgnored()
+	{
+		Fixture f(g_md);
+		f.send(0xb0, 20, 66);
+		const auto serial = f.controller.getMessageSerial();
+		const auto last = describe(f.controller.getLastMessage());
+
+		// A pad held down keeps sending pressure: it must not appear as the last message.
+		f.send(0xa0, 21, 72);
+		f.send(0xd0, 72, 0);
+		f.send(0xe0, 0, 64);
+		f.send(0xc0, 5, 0);
+		require(f.controller.getMessageSerial() == serial, "pressure and the like do not count as messages");
+		require(describe(f.controller.getLastMessage()) == last, "the last message is unchanged");
+
+		// And they do not disturb Learn.
+		f.controller.beginLearn(md::PanelControl::Play);
+		f.send(0xa0, 21, 72);
+		require(f.controller.getLearnTarget().is(md::PanelControl::Play), "still waiting");
+		f.send(0x90, 90, 100);
+		require(buttonSource(f.controller, md::PanelControl::Play) == Source{ Source::Kind::Note, 90 }, "the note is learned, not the pressure");
+	}
+
 	void testLearnHonoursTheChannel()
 	{
 		Fixture f(g_md);
@@ -312,6 +496,13 @@ int main()
 		testLearnMovesAnExistingSource();
 		testLearnPush();
 		testHeldStepWhileTurning();
+		testLearnSequenceWithNotes();
+		testLearnSequenceIgnoresRepeatsAndReleases();
+		testLearnSequenceOfEncoders();
+		testLearnSequenceCanBeStopped();
+		testLearnSequenceSkipsControlsTheMachineLacks();
+		testFilteredMessagesAreFlagged();
+		testPressureIsIgnored();
 		testLearnHonoursTheChannel();
 		testCancelAndClear();
 		testOnlyAvailableControlsCanBeLearned();

@@ -376,6 +376,19 @@ namespace
 		require(fromText(toText(custom), g_mm, loaded) && loaded == custom, "pushes round trip");
 	}
 
+	void testBindableMessages()
+	{
+		require(isBindableMessage(0x90) && isBindableMessage(0x9f), "note on");
+		require(isBindableMessage(0x80) && isBindableMessage(0x8f), "note off");
+		require(isBindableMessage(0xb0) && isBindableMessage(0xbf), "controller");
+		require(!isBindableMessage(0xa0) && !isBindableMessage(0xaf), "polyphonic pressure (what pads send while held)");
+		require(!isBindableMessage(0xd0), "channel pressure");
+		require(!isBindableMessage(0xe0), "pitch bend");
+		require(!isBindableMessage(0xc0), "program change");
+		require(!isBindableMessage(0xf8) && !isBindableMessage(0xfe) && !isBindableMessage(0xf0), "system messages");
+		require(!isBindableMessage(0x40), "a data byte is not a status");
+	}
+
 	void testDescribe()
 	{
 		require(describe(Source{}) == "-", "unbound source");
@@ -405,6 +418,7 @@ int main()
 		testTextRoundTrip();
 		testTextIsForgiving();
 		testVersionOneGetsDefaultPushes();
+		testBindableMessages();
 		testDescribe();
 	}
 	catch(const std::exception& _e)

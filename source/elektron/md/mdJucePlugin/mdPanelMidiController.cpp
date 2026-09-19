@@ -59,8 +59,14 @@ namespace mdJucePlugin::panelMidi
 
 	void Controller::handleMessage(const RawMessage& _message)
 	{
+		// Same rule as the input: what cannot be bound is not shown or learned.
+		if(!isBindableMessage(_message.status))
+			return;
+
 		m_lastMessage = _message;
 		++m_messageSerial;
+		m_lastMessageFiltered = _message.status >= 0x80 && _message.status < 0xf0
+			&& !passesChannel(getTable(), _message.status);
 
 		// While learning, the controller is being pointed at a control, not played.
 		if(m_learn.active())
@@ -95,6 +101,12 @@ namespace mdJucePlugin::panelMidi
 		if(m_learn.kind == LearnTarget::Kind::Encoder && source.kind != Source::Kind::Controller)
 			return false;
 
+		// Within a run, what was already learned must not be learned again.
+		if(!m_sequence.empty())
+			for(const auto& learned : m_sequenceLearned)
+				if(learned == source)
+					return false;
+
 		auto table = getTable();
 
 		for(auto& encoder : table.encoders)
@@ -114,9 +126,61 @@ namespace mdJucePlugin::panelMidi
 		else
 			table.buttons[static_cast<size_t>(m_learn.control)] = source;
 
-		m_learn = {};
+		if(m_sequence.empty())
+		{
+			m_learn = {};
+		}
+		else
+		{
+			m_sequenceLearned.push_back(source);
+			if(++m_sequenceIndex < m_sequence.size())
+				m_learn = m_sequence[m_sequenceIndex];
+			else
+				endSequence();
+		}
+
 		replaceTable(table);
 		return true;
+	}
+
+	void Controller::endSequence()
+	{
+		m_sequence.clear();
+		m_sequenceLearned.clear();
+		m_sequenceIndex = 0;
+		m_learn = {};
+	}
+
+	void Controller::beginLearnSequence(const std::vector<LearnTarget>& _targets)
+	{
+		std::vector<LearnTarget> available;
+		for(const auto& target : _targets)
+		{
+			switch(target.kind)
+			{
+			case LearnTarget::Kind::Encoder:
+				if(isAvailable(m_model, target.encoder))
+					available.push_back(target);
+				break;
+			case LearnTarget::Kind::EncoderPush:
+				if(isPushAvailable(m_model, target.encoder))
+					available.push_back(target);
+				break;
+			case LearnTarget::Kind::Button:
+				if(isAvailable(m_model, target.control))
+					available.push_back(target);
+				break;
+			case LearnTarget::Kind::None:
+				break;
+			}
+		}
+		if(available.empty())
+			return;
+
+		endSequence();
+		m_sequence = std::move(available);
+		m_learn = m_sequence.front();
+		++m_revision;
 	}
 
 	void Controller::setChannel(const uint8_t _channel)
@@ -165,7 +229,7 @@ namespace mdJucePlugin::panelMidi
 
 	void Controller::resetToDefault()
 	{
-		m_learn = {};
+		endSequence();
 		replaceTable(makeDefaultTable(m_model));
 	}
 
@@ -173,7 +237,7 @@ namespace mdJucePlugin::panelMidi
 	{
 		if(!isAvailable(m_model, _encoder))
 			return;
-		m_learn = {};
+		endSequence();
 		m_learn.kind = LearnTarget::Kind::Encoder;
 		m_learn.encoder = _encoder;
 		++m_revision;
@@ -183,7 +247,7 @@ namespace mdJucePlugin::panelMidi
 	{
 		if(static_cast<size_t>(_encoder) >= g_pushCount || !isPushAvailable(m_model, _encoder))
 			return;
-		m_learn = {};
+		endSequence();
 		m_learn.kind = LearnTarget::Kind::EncoderPush;
 		m_learn.encoder = _encoder;
 		++m_revision;
@@ -193,7 +257,7 @@ namespace mdJucePlugin::panelMidi
 	{
 		if(!isAvailable(m_model, _control))
 			return;
-		m_learn = {};
+		endSequence();
 		m_learn.kind = LearnTarget::Kind::Button;
 		m_learn.control = _control;
 		++m_revision;
@@ -203,7 +267,7 @@ namespace mdJucePlugin::panelMidi
 	{
 		if(!m_learn.active())
 			return;
-		m_learn = {};
+		endSequence();
 		++m_revision;
 	}
 }

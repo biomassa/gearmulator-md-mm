@@ -57,6 +57,9 @@ namespace mdJucePlugin::panelMidi
 			return;	// sysex and anything longer is not a panel message
 
 		const auto* const data = _message.getRawData();
+		if(!isBindableMessage(data[0]))
+			return;	// pressure, pitch bend, program change, clock ...
+
 		const RawMessage message{ data[0], count > 1 ? data[1] : uint8_t(0), count > 2 ? data[2] : uint8_t(0) };
 
 		{

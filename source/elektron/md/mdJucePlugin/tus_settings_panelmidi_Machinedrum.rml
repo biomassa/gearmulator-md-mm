@@ -25,6 +25,9 @@
 
 	<settingsspacer1/>
 	<h2>Encoders</h2>
+	<div class="settings-hlayout">
+		<button id="btLearnAllEncoders" class="button">Learn all in order</button>
+	</div>
 	<table class="settings-table" style="padding-top: 0.5em; padding-bottom: 1em;">
 		<tr class="settings-tr settings-tr-headline">
 			<td style="width: 22%;">Control</td>
@@ -48,6 +51,9 @@
 	</table>
 
 	<h2>Encoder push</h2>
+	<div class="settings-hlayout">
+		<button id="btLearnAllPushes" class="button">Learn all in order</button>
+	</div>
 	<table class="settings-table" style="padding-top: 0.5em; padding-bottom: 1em;">
 		<tr class="settings-tr settings-tr-headline">
 			<td style="width: 22%;">Control</td>
@@ -65,6 +71,9 @@
 	</table>
 
 	<h2>Trig keys</h2>
+	<div class="settings-hlayout">
+		<button id="btLearnAllTrigs" class="button">Learn all in order</button>
+	</div>
 	<table class="settings-table" style="padding-top: 0.5em; padding-bottom: 1em;">
 		<tr class="settings-tr settings-tr-headline">
 			<td style="width: 22%;">Control</td>
@@ -82,6 +91,9 @@
 	</table>
 
 	<h2>Buttons</h2>
+	<div class="settings-hlayout">
+		<button id="btLearnAllButtons" class="button">Learn all in order</button>
+	</div>
 	<table class="settings-table" style="padding-top: 0.5em; padding-bottom: 1em;">
 		<tr class="settings-tr settings-tr-headline">
 			<td style="width: 22%;">Control</td>

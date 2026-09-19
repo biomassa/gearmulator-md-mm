@@ -24,6 +24,16 @@ namespace mdJucePlugin::panelMidi
 		uint8_t data2 = 0;
 	};
 
+	// Only note on/off and controller messages can be bound to a panel control.
+	// Pressure (aftertouch), pitch bend, program change and system messages are
+	// dropped before they are queued, so pads that keep sending pressure while
+	// held cannot clutter the "last received" line or fill the queue.
+	constexpr bool isBindableMessage(const uint8_t _status)
+	{
+		const auto type = _status & 0xf0;
+		return _status >= 0x80 && _status < 0xf0 && (type == 0x80 || type == 0x90 || type == 0xb0);
+	}
+
 	enum class EncoderMode : uint8_t
 	{
 		Absolute,				// knob/pot: the change since the last value turns the encoder
