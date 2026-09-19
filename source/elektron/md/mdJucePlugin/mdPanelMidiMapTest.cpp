@@ -389,6 +389,50 @@ namespace
 		require(!isBindableMessage(0x40), "a data byte is not a status");
 	}
 
+	bool contains(const std::string& _text, const char* _part)
+	{
+		return _text.find(_part) != std::string::npos;
+	}
+
+	void testChannelOverlapWarning()
+	{
+		// Machinedrum with base channel 1 (zero-based 0) listens on 1-4.
+		for(uint8_t channel = 1; channel <= 4; ++channel)
+		{
+			const auto w = channelOverlapWarning(g_md, channel, 0);
+			require(w.has_value(), "channels 1-4 overlap the MD");
+			require(contains(*w, "Machinedrum") && contains(*w, "(1-4)") && contains(*w, "for example 16"), "names the machine, its channels and a free one");
+		}
+		for(uint8_t channel = 5; channel <= 16; ++channel)
+			require(!channelOverlapWarning(g_md, channel, 0), "channels 5-16 are free on the MD");
+
+		// Omni always includes them.
+		const auto omni = channelOverlapWarning(g_md, 0, 0);
+		require(omni && contains(*omni, "Omni") && contains(*omni, "1-4"), "omni overlaps");
+
+		// The Monomachine listens on six channels.
+		for(uint8_t channel = 1; channel <= 6; ++channel)
+			require(channelOverlapWarning(g_mm, channel, 0).has_value(), "channels 1-6 overlap the MM");
+		require(!channelOverlapWarning(g_mm, 7, 0), "channel 7 is free on the MM");
+		require(contains(*channelOverlapWarning(g_mm, 3, 0), "Monomachine"), "names the MM");
+
+		// A higher base channel moves the block, and 16 stops being the free one.
+		require(!channelOverlapWarning(g_md, 12, 12), "MD base 13 uses 13-16, so 12 is free");
+		const auto high = channelOverlapWarning(g_md, 16, 12);
+		require(high && contains(*high, "(13-16)") && contains(*high, "for example 12"), "16 overlaps and 12 is suggested");
+		require(!channelOverlapWarning(g_mm, 10, 10), "MM base 11 uses 11-16, so 10 is free");
+		require(channelOverlapWarning(g_mm, 16, 10).has_value(), "MM base 11 reaches 16");
+
+		// The block cannot run past channel 16.
+		const auto top = channelOverlapWarning(g_md, 16, 15);
+		require(top && contains(*top, "listens on (16)") && contains(*top, "for example 15"), "a block at the top is clamped to channel 16");
+
+		// Base channel not known yet: no guess.
+		require(!channelOverlapWarning(g_md, 0, 0x7f), "unknown base gives no warning");
+		require(!channelOverlapWarning(g_md, 1, 0xff), "unknown base gives no warning");
+		require(!channelOverlapWarning(g_md, 17, 0), "a channel out of range gives no warning");
+	}
+
 	void testDescribe()
 	{
 		require(describe(Source{}) == "-", "unbound source");
@@ -419,6 +463,7 @@ int main()
 		testTextIsForgiving();
 		testVersionOneGetsDefaultPushes();
 		testBindableMessages();
+		testChannelOverlapWarning();
 		testDescribe();
 	}
 	catch(const std::exception& _e)

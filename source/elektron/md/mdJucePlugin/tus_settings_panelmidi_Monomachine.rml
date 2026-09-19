@@ -22,6 +22,7 @@
 		</combo>
 		<button id="btPanelMidiReset" class="button">Reset to default map</button>
 	</div>
+	<label id="panelMidiChannelWarning" style="display: none; color: #ffb347;">Warning</label>
 
 	<settingsspacer1/>
 	<h2>Encoders</h2>

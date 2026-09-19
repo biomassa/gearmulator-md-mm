@@ -12,6 +12,7 @@
 #include "juceRmlUi/rmlHelper.h"
 
 #include "RmlUi/Core/Element.h"
+#include "RmlUi/Core/ID.h"
 
 namespace mdJucePlugin
 {
@@ -196,6 +197,7 @@ namespace mdJucePlugin
 
 		m_portName = juceRmlUi::helper::findChild(_root, "panelMidiPortName", false);
 		m_monitor = juceRmlUi::helper::findChild(_root, "panelMidiMonitor", false);
+		m_channelWarning = juceRmlUi::helper::findChild(_root, "panelMidiChannelWarning", false);
 
 		jucePluginEditorLib::SettingsPlugin::createToggleButton(_root, "btPanelMidiPort",
 			m_editor.getProcessor().getConfig(), panelMidi::g_configKeyVirtualPort, [this](const bool _enabled)
@@ -403,6 +405,21 @@ namespace mdJucePlugin
 			if(c->wasLastMessageFiltered())
 				text += " - ignored, the channel filter is " + std::to_string(c->getTable().channel);
 			m_monitor->SetInnerRML(text);
+		}
+
+		if(m_channelWarning)
+		{
+			// Depends on the channel filter and on the machine's base channel, which the
+			// machine reports some time after start, so it is checked on every tick.
+			const auto warning = panelMidi::channelOverlapWarning(c->getModel(), c->getTable().channel,
+				m_editor.getMachineBaseChannel()).value_or(std::string());
+			if(warning != m_shownChannelWarning)
+			{
+				m_shownChannelWarning = warning;
+				m_channelWarning->SetInnerRML(warning);
+				m_channelWarning->SetProperty(Rml::PropertyId::Display,
+					warning.empty() ? Rml::Style::Display::None : Rml::Style::Display::Block);
+			}
 		}
 
 		if(m_portName)

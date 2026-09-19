@@ -77,6 +77,9 @@ namespace mdJucePlugin
 		// Panel MIDI: the bindings, and the virtual port that feeds them.
 		panelMidi::Controller& getPanelMidi() { return *m_panelMidi; }
 		void setPanelMidiPortEnabled(bool _enabled);
+		// The machine's base channel (zero-based), read from its Global settings.
+		// Above 15 means it has not been read yet.
+		uint8_t getMachineBaseChannel() const;
 		std::string getPanelMidiPortName() const;
 		void applyPixelPerfectPanel();
 		void applyLcdInteraction();

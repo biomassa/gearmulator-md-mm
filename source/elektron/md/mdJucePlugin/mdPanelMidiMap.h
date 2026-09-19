@@ -146,6 +146,23 @@ namespace mdJucePlugin::panelMidi
 
 	bool passesChannel(const Table& _table, uint8_t _status);
 
+	// The machine listens to a block of consecutive MIDI channels starting at its
+	// base channel (a Global setting of the machine): four on the Machinedrum, six
+	// on the Monomachine. On those channels a controller change is taken as a
+	// parameter value, so a controller that also reaches the machine's own MIDI
+	// input changes its parameters as well as driving the panel.
+	constexpr uint8_t machineChannelCount(const md::MachineModel _model)
+	{
+		return _model == md::MachineModel::Monomachine ? 6 : 4;
+	}
+
+	// Warning text when the panel channel filter (0 = omni, 1-16) includes a
+	// channel the machine listens on; nothing otherwise. baseChannel is zero-based
+	// as the machine reports it. A value above 15 means it is not known yet, which
+	// gives no warning rather than a guess.
+	std::optional<std::string> channelOverlapWarning(md::MachineModel _model, uint8_t _panelChannel,
+		uint8_t _baseChannel);
+
 	class Map
 	{
 	public:

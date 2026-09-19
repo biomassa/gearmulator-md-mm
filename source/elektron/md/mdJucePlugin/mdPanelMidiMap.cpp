@@ -1,5 +1,6 @@
 #include "mdPanelMidiMap.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iterator>
 #include <sstream>
@@ -336,6 +337,45 @@ namespace mdJucePlugin::panelMidi
 	bool passesChannel(const Table& _table, const uint8_t _status)
 	{
 		return _table.channel == 0 || (_status & 0x0f) == _table.channel - 1;
+	}
+
+	std::optional<std::string> channelOverlapWarning(const md::MachineModel _model, const uint8_t _panelChannel,
+		const uint8_t _baseChannel)
+	{
+		if(_baseChannel > 15 || _panelChannel > 16)
+			return std::nullopt;
+
+		// The machine's channels, counted 1-16 like the panel filter.
+		const int first = _baseChannel + 1;
+		const int last = std::min(first + machineChannelCount(_model) - 1, 16);
+
+		const bool omni = _panelChannel == 0;
+		if(!omni && (_panelChannel < first || _panelChannel > last))
+			return std::nullopt;
+
+		const std::string machine = _model == md::MachineModel::Monomachine ? "Monomachine" : "Machinedrum";
+		const std::string range = first == last
+			? std::to_string(first) : std::to_string(first) + "-" + std::to_string(last);
+
+		// The highest channel outside the block, so the advice is usually "16".
+		int suggestion = 0;
+		for(int channel = 16; channel >= 1; --channel)
+		{
+			if(channel < first || channel > last)
+			{
+				suggestion = channel;
+				break;
+			}
+		}
+
+		std::string text = omni
+			? "Warning: Omni includes channels " + range + ", which the " + machine + " itself listens on."
+			: "Warning: channel " + std::to_string(_panelChannel) + " is one of the channels the " + machine
+				+ " itself listens on (" + range + ").";
+		text += " If this controller also reaches the machine's own MIDI input, its messages will change the machine's parameters.";
+		if(suggestion != 0)
+			text += " Use another channel, for example " + std::to_string(suggestion) + ".";
+		return text;
 	}
 
 	void Map::setTable(const Table& _table)

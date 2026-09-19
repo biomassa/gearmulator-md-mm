@@ -1899,6 +1899,11 @@ namespace mdJucePlugin
 			});
 	}
 
+	uint8_t Editor::getMachineBaseChannel() const
+	{
+		return m_controller.getAutomationBaseChannel();
+	}
+
 	std::string Editor::getPanelMidiPortName() const
 	{
 		return m_panelMidiInput ? m_panelMidiInput->getPortName() : std::string();

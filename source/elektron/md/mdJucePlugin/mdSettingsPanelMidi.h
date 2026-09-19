@@ -73,9 +73,11 @@ namespace mdJucePlugin
 		juceRmlUi::ElemComboBox* m_channel = nullptr;
 		Rml::Element* m_portName = nullptr;
 		Rml::Element* m_monitor = nullptr;
+		Rml::Element* m_channelWarning = nullptr;
 
 		uint32_t m_revision = ~0u;
 		uint32_t m_messageSerial = 0;
 		std::string m_shownPortName = "?";
+		std::string m_shownChannelWarning = "?";
 	};
 }
